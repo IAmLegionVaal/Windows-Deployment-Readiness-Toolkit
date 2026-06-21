@@ -1,0 +1,9 @@
+[CmdletBinding(SupportsShouldProcess=$true)]
+param([switch]$EnableRequiredServices,[switch]$RepairComponentStore,[switch]$ClearSetupCache,[switch]$SyncTime,[string]$OutputPath="$env:USERPROFILE\Desktop\DeploymentReadinessRepair")
+$ErrorActionPreference='Stop';New-Item -ItemType Directory -Path $OutputPath -Force|Out-Null;$Log=Join-Path $OutputPath ("repair-{0:yyyyMMdd-HHmmss}.log"-f(Get-Date));function L($m){"$(Get-Date -Format s) $m"|Tee-Object -FilePath $Log -Append};if(-not($EnableRequiredServices-or$RepairComponentStore-or$ClearSetupCache-or$SyncTime)){throw'Choose at least one repair action.'}
+Get-ComputerInfo|Select WindowsProductName,WindowsVersion,OsBuildNumber,CsName,CsTotalPhysicalMemory|ConvertTo-Json|Set-Content (Join-Path $OutputPath 'before.json')
+if($EnableRequiredServices){foreach($s in'wuauserv','bits','cryptsvc','trustedinstaller'){if(Get-Service $s -ErrorAction SilentlyContinue){if($PSCmdlet.ShouldProcess($s,'Set manual and start service')){Set-Service $s -StartupType Manual;Start-Service $s -ErrorAction SilentlyContinue;L"Prepared $s"}}}}
+if($RepairComponentStore-and$PSCmdlet.ShouldProcess('Windows image','Run DISM RestoreHealth and SFC')){dism /Online /Cleanup-Image /RestoreHealth|Tee-Object -FilePath $Log -Append;sfc /scannow|Tee-Object -FilePath $Log -Append;L'Component repair completed.'}
+if($ClearSetupCache){foreach($p in @("$env:SystemDrive\`$WINDOWS.~BT\Sources\Panther","$env:WINDIR\Panther")){if(Test-Path $p){Get-ChildItem $p -Filter '*.tmp' -File -ErrorAction SilentlyContinue|ForEach-Object{if($PSCmdlet.ShouldProcess($_.FullName,'Remove stale setup temporary file')){Remove-Item $_.FullName -Force}}}};L'Setup temporary files processed.'}
+if($SyncTime-and$PSCmdlet.ShouldProcess('Windows Time','Resynchronise')){Start-Service W32Time -ErrorAction SilentlyContinue;w32tm /resync|Tee-Object -FilePath $Log -Append;L'Time synchronised.'}
+L'Repair workflow finished.'
